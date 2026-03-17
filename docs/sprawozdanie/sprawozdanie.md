@@ -1,8 +1,8 @@
 # Sprawozdanie — Stacja Pogodowa na Raspberry Pi Zero W
 
-**Przedmiot:** SCIR
-**Autorzy:** Oliwier Szypczyn, Kacper Multan
-**Data rozpoczęcia:** 2026-03-13
+- **Przedmiot:** SCIR
+- **Autorzy:** Oliwier Szypczyn, Kacper Multan
+- **Data rozpoczęcia:** 2026-03-13
 
 ---
 
@@ -10,6 +10,10 @@
 
 - [Sprawozdanie — Stacja Pogodowa na Raspberry Pi Zero W](#sprawozdanie--stacja-pogodowa-na-raspberry-pi-zero-w)
   - [Spis treści](#spis-treści)
+  - [Opis projektu](#opis-projektu)
+  - [Komponenty](#komponenty)
+  - [Architektura systemu](#architektura-systemu)
+  - [Schemat połączeń](#schemat-połączeń)
   - [Krok 1 — Konfiguracja ThingSpeak](#krok-1--konfiguracja-thingspeak)
     - [1.1 Rejestracja konta MathWorks](#11-rejestracja-konta-mathworks)
     - [1.2 Utworzenie kanału ThingSpeak](#12-utworzenie-kanału-thingspeak)
@@ -30,6 +34,73 @@
     - [4.2 Włączenie interfejsu I2C](#42-włączenie-interfejsu-i2c)
     - [4.3 Instalacja narzędzi I2C i bibliotek](#43-instalacja-narzędzi-i2c-i-bibliotek)
     - [4.4 Restart i weryfikacja](#44-restart-i-weryfikacja)
+  - [Krok 5 — Testowy skrypt Python (LED + I2C)](#krok-5--testowy-skrypt-python-led--i2c)
+    - [5.1 Przesłanie skryptu na Pi](#51-przesłanie-skryptu-na-pi)
+    - [5.2 Uruchomienie skryptu](#52-uruchomienie-skryptu)
+    - [5.3 Wynik działania](#53-wynik-działania)
+
+---
+
+## Opis projektu
+
+Celem projektu jest budowa stacji pogodowej opartej na mikrokomputerze **Raspberry Pi Zero W**. Stacja mierzy temperaturę, wilgotność powietrza, ciśnienie atmosferyczne oraz natężenie światła, a zebrane dane wysyła cyklicznie (co 60 sekund) do chmury **ThingSpeak**, gdzie prezentowane są jako wykresy w czasie rzeczywistym.
+
+Komunikacja między mikrokomputerem a czujnikami odbywa się przez magistralę **I2C** (Inter-Integrated Circuit) — dwuprzewodowy protokół szeregowy, dzięki któremu oba czujniki współdzielą te same linie danych (SDA) i zegara (SCL), a rozróżniane są po unikatowych adresach. Dane z czujników przesyłane są do ThingSpeak za pomocą zapytań HTTP POST przez wbudowany moduł WiFi Raspberry Pi.
+
+---
+
+## Komponenty
+
+| # | Komponent | Parametry | Rola w projekcie |
+|---|-----------|-----------|------------------|
+| 1 | **Raspberry Pi Zero WH** | ARM11 @ 1 GHz, 512 MB RAM, WiFi 802.11n, Bluetooth 4.1, 40-pin GPIO z wlutowanymi goldpinami | Jednostka centralna — odczytuje dane z czujników, przetwarza je i wysyła do chmury |
+| 2 | **BME280** | Temperatura: −40…+85 °C (±1 °C), wilgotność: 0–100% (±3%), ciśnienie: 300–1100 hPa (±1 hPa), interfejs: I2C/SPI, zasilanie: 3,3 V, adres I2C: `0x76` | Czujnik temperatury, wilgotności i ciśnienia atmosferycznego |
+| 3 | **BH1750** | Zakres: 1–65535 lx, rozdzielczość: 1 lx, interfejs: I2C, zasilanie: 3,3 V, adres I2C: `0x23` | Czujnik natężenia światła (iluminancji) |
+| 4 | **Karta microSD Goodram 16 GB** | Class 10, UHS-I, 100 MB/s | Nośnik systemu operacyjnego (Raspberry Pi OS Lite) |
+| 5 | **Płytka stykowa (breadboard)** | 400 otworów | Prototypowanie połączeń bez lutowania |
+| 6 | **Kabelki jumper** | ~10 szt. | Połączenie pinów GPIO z czujnikami na płytce stykowej |
+| 7 | **Zasilacz micro-USB 5 V / 2,5 A** | W zestawie z Pi | Zasilanie Raspberry Pi |
+
+---
+
+## Architektura systemu
+
+```
+┌─────────────┐    I2C     ┌──────────────────┐    WiFi/HTTP   ┌─────────────┐
+│   BME280    │───────────▶│                  │───────────────▶│  ThingSpeak │
+│ temp/wilg/  │            │  Raspberry Pi    │                │   (chmura)  │
+│  ciśnienie  │            │    Zero W        │                │             │
+└─────────────┘            │                  │                │  - wykresy  │
+                           │  Python script   │                │  - eksport  │
+┌─────────────┐    I2C     │  (cron co 60s)   │                │  - alerty   │
+│   BH1750    │───────────▶│                  │                └─────────────┘
+│  światło    │            └──────────────────┘
+└─────────────┘
+```
+
+**Przepływ danych:**
+
+1. Czujniki BME280 i BH1750 podłączone do Raspberry Pi przez magistralę I2C
+2. Skrypt Python (uruchamiany automatycznie przez cron) odczytuje dane co 60 sekund
+3. Dane wysyłane zapytaniem HTTP POST do ThingSpeak REST API
+4. ThingSpeak generuje wykresy dostępne przez przeglądarkę z dowolnego urządzenia
+
+---
+
+## Schemat połączeń
+
+Oba czujniki komunikują się przez I2C i współdzielą te same 4 piny Raspberry Pi:
+
+| Pin RPi | Funkcja | Kolor kabelka | Pin BME280 | Pin BH1750 |
+|---------|---------|---------------|------------|------------|
+| Pin 1 | 3,3 V | czerwony | VIN | VCC |
+| Pin 6 | GND | czarny | GND | GND |
+| Pin 3 | SDA (GPIO 2) | zielony | SDA | SDA |
+| Pin 5 | SCL (GPIO 3) | żółty | SCL | SCL |
+
+Łącznie podłączone są tylko **4 kabelki** z Raspberry Pi do płytki stykowej, na której umieszczone są oba czujniki. Rezystory pull-up nie są potrzebne — moduły BME280 i BH1750 mają je wbudowane. Rozróżnianie czujników na wspólnej magistrali odbywa się po adresach I2C (BME280: `0x76`, BH1750: `0x23`).
+
+![Schemat połączeń](img/circuit_image.svg)
 
 ---
 
@@ -213,6 +284,43 @@ ls /dev/i2c*
 Wyświetlenie `/dev/i2c-1` potwierdza, że interfejs I2C działa poprawnie.
 
 ![Weryfikacja I2C po restarcie](img/18_i2c_weryfikacja.png)
+
+---
+
+## Krok 5 — Testowy skrypt Python (LED + I2C)
+
+**Cel:** Napisanie i uruchomienie prostego programu w Pythonie, który weryfikuje działanie GPIO (miganie wbudowanym LED-em) oraz sprawdza gotowość magistrali I2C do podłączenia czujników.
+
+### 5.1 Przesłanie skryptu na Pi
+
+Skrypt `test_led_i2c.py` przesłano z komputera na Raspberry Pi za pomocą `scp`:
+
+```bash
+scp src/test_led_i2c.py pi@weather-station.local:/home/pi/scripts
+```
+
+### 5.2 Uruchomienie skryptu
+
+Na Pi uruchomiono skrypt z uprawnieniami root (wymagane do sterowania LED-em ACT):
+
+```bash
+cd scripts
+sudo python3 test_led_i2c.py
+```
+
+Skrypt wykonuje dwa testy:
+
+**Test 1 — Miganie LED-em ACT:**
+Program steruje wbudowaną zieloną diodą LED na Raspberry Pi (LED aktywności, GPIO 47) poprzez interfejs sysfs (`/sys/class/leds/ACT/`). LED miga 5 razy z interwałem 0,4 s, po czym przywracany jest domyślny tryb (miganie przy odczycie karty SD).
+
+**Test 2 — Skanowanie magistrali I2C:**
+Program wywołuje komendę `i2cdetect -y 1`, która skanuje wszystkie adresy na magistrali I2C-1. Na tym etapie czujniki nie są jeszcze podłączone, więc oczekujemy pustego wyniku — ale sam fakt poprawnego skanu potwierdza, że konfiguracja I2C z Kroku 4 działa prawidłowo.
+
+### 5.3 Wynik działania
+
+Dioda LED migała poprawnie, a skan I2C zakończył się sukcesem (brak urządzeń to oczekiwany wynik na tym etapie). System jest gotowy do podłączenia czujników w następnym kroku.
+
+![Wynik skryptu testowego](img/19_test_led_i2c.png)
 
 ---
 
