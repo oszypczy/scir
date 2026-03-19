@@ -1,5 +1,3 @@
-# Sprawozdanie — Stacja Pogodowa na Raspberry Pi Zero W
-
 - **Przedmiot:** SCIR
 - **Autorzy:** Oliwier Szypczyn, Kacper Multan
 - **Data rozpoczęcia:** 2026-03-13
@@ -8,36 +6,35 @@
 
 ## Spis treści
 
-- [Sprawozdanie — Stacja Pogodowa na Raspberry Pi Zero W](#sprawozdanie--stacja-pogodowa-na-raspberry-pi-zero-w)
-  - [Spis treści](#spis-treści)
-  - [Opis projektu](#opis-projektu)
-  - [Komponenty](#komponenty)
-  - [Architektura systemu](#architektura-systemu)
-  - [Schemat połączeń](#schemat-połączeń)
-  - [Krok 1 — Konfiguracja ThingSpeak](#krok-1--konfiguracja-thingspeak)
-    - [1.1 Rejestracja konta MathWorks](#11-rejestracja-konta-mathworks)
-    - [1.2 Utworzenie kanału ThingSpeak](#12-utworzenie-kanału-thingspeak)
-    - [1.3 Widok utworzonego kanału](#13-widok-utworzonego-kanału)
-    - [1.4 Pozyskanie klucza API](#14-pozyskanie-klucza-api)
-  - [Krok 2 — Instalacja systemu na karcie microSD](#krok-2--instalacja-systemu-na-karcie-microsd)
-    - [2.1 Pobranie Raspberry Pi Imager](#21-pobranie-raspberry-pi-imager)
-    - [2.2 Wybór systemu operacyjnego](#22-wybór-systemu-operacyjnego)
-    - [2.3 Wybór karty microSD](#23-wybór-karty-microsd)
-    - [2.4 Konfiguracja wstępna (OS Customisation)](#24-konfiguracja-wstępna-os-customisation)
-    - [2.5 Zapis obrazu na kartę](#25-zapis-obrazu-na-kartę)
-    - [2.6 Weryfikacja i zakończenie](#26-weryfikacja-i-zakończenie)
-  - [Krok 3 — Pierwsze uruchomienie Pi i połączenie SSH](#krok-3--pierwsze-uruchomienie-pi-i-połączenie-ssh)
-    - [3.1 Włożenie karty i uruchomienie Pi](#31-włożenie-karty-i-uruchomienie-pi)
-    - [3.2 Połączenie SSH z komputera](#32-połączenie-ssh-z-komputera)
-  - [Krok 4 — Konfiguracja Pi (I2C, aktualizacja)](#krok-4--konfiguracja-pi-i2c-aktualizacja)
-    - [4.1 Aktualizacja systemu](#41-aktualizacja-systemu)
-    - [4.2 Włączenie interfejsu I2C](#42-włączenie-interfejsu-i2c)
-    - [4.3 Instalacja narzędzi I2C i bibliotek](#43-instalacja-narzędzi-i2c-i-bibliotek)
-    - [4.4 Restart i weryfikacja](#44-restart-i-weryfikacja)
-  - [Krok 5 — Testowy skrypt Python (LED + I2C)](#krok-5--testowy-skrypt-python-led--i2c)
-    - [5.1 Przesłanie skryptu na Pi](#51-przesłanie-skryptu-na-pi)
-    - [5.2 Uruchomienie skryptu](#52-uruchomienie-skryptu)
-    - [5.3 Wynik działania](#53-wynik-działania)
+- [Spis treści](#spis-treści)
+- [Opis projektu](#opis-projektu)
+- [Komponenty](#komponenty)
+- [Architektura systemu](#architektura-systemu)
+- [Schemat połączeń](#schemat-połączeń)
+- [Krok 1 — Konfiguracja ThingSpeak](#krok-1--konfiguracja-thingspeak)
+  - [1.1 Rejestracja konta MathWorks](#11-rejestracja-konta-mathworks)
+  - [1.2 Utworzenie kanału ThingSpeak](#12-utworzenie-kanału-thingspeak)
+  - [1.3 Widok utworzonego kanału](#13-widok-utworzonego-kanału)
+  - [1.4 Pozyskanie klucza API](#14-pozyskanie-klucza-api)
+- [Krok 2 — Instalacja systemu na karcie microSD](#krok-2--instalacja-systemu-na-karcie-microsd)
+  - [2.1 Pobranie Raspberry Pi Imager](#21-pobranie-raspberry-pi-imager)
+  - [2.2 Wybór systemu operacyjnego](#22-wybór-systemu-operacyjnego)
+  - [2.3 Wybór karty microSD](#23-wybór-karty-microsd)
+  - [2.4 Konfiguracja wstępna (OS Customisation)](#24-konfiguracja-wstępna-os-customisation)
+  - [2.5 Zapis obrazu na kartę](#25-zapis-obrazu-na-kartę)
+  - [2.6 Weryfikacja i zakończenie](#26-weryfikacja-i-zakończenie)
+- [Krok 3 — Pierwsze uruchomienie Pi i połączenie SSH](#krok-3--pierwsze-uruchomienie-pi-i-połączenie-ssh)
+  - [3.1 Włożenie karty i uruchomienie Pi](#31-włożenie-karty-i-uruchomienie-pi)
+  - [3.2 Połączenie SSH z komputera](#32-połączenie-ssh-z-komputera)
+- [Krok 4 — Konfiguracja Pi (I2C, aktualizacja)](#krok-4--konfiguracja-pi-i2c-aktualizacja)
+  - [4.1 Aktualizacja systemu](#41-aktualizacja-systemu)
+  - [4.2 Włączenie interfejsu I2C](#42-włączenie-interfejsu-i2c)
+  - [4.3 Instalacja narzędzi I2C i bibliotek](#43-instalacja-narzędzi-i2c-i-bibliotek)
+  - [4.4 Restart i weryfikacja](#44-restart-i-weryfikacja)
+- [Krok 5 — Testowy skrypt Python (LED + I2C)](#krok-5--testowy-skrypt-python-led--i2c)
+  - [5.1 Przesłanie skryptu na Pi](#51-przesłanie-skryptu-na-pi)
+  - [5.2 Uruchomienie skryptu](#52-uruchomienie-skryptu)
+  - [5.3 Wynik działania](#53-wynik-działania)
 
 ---
 
@@ -65,19 +62,6 @@ Komunikacja między mikrokomputerem a czujnikami odbywa się przez magistralę *
 
 ## Architektura systemu
 
-```
-┌─────────────┐    I2C     ┌──────────────────┐    WiFi/HTTP   ┌─────────────┐
-│   BME280    │───────────▶│                  │───────────────▶│  ThingSpeak │
-│ temp/wilg/  │            │  Raspberry Pi    │                │   (chmura)  │
-│  ciśnienie  │            │    Zero W        │                │             │
-└─────────────┘            │                  │                │  - wykresy  │
-                           │  Python script   │                │  - eksport  │
-┌─────────────┐    I2C     │  (cron co 60s)   │                │  - alerty   │
-│   BH1750    │───────────▶│                  │                └─────────────┘
-│  światło    │            └──────────────────┘
-└─────────────┘
-```
-
 **Przepływ danych:**
 
 1. Czujniki BME280 i BH1750 podłączone do Raspberry Pi przez magistralę I2C
@@ -100,7 +84,7 @@ Oba czujniki komunikują się przez I2C i współdzielą te same 4 piny Raspberr
 
 Łącznie podłączone są tylko **4 kabelki** z Raspberry Pi do płytki stykowej, na której umieszczone są oba czujniki. Rezystory pull-up nie są potrzebne — moduły BME280 i BH1750 mają je wbudowane. Rozróżnianie czujników na wspólnej magistrali odbywa się po adresach I2C (BME280: `0x76`, BH1750: `0x23`).
 
-![Schemat połączeń](img/circuit_image.svg)
+![Schemat połączeń](img/circuit_image.png)
 
 ---
 
@@ -129,8 +113,6 @@ Po zalogowaniu na https://thingspeak.com przejśto do **Channels → New Channel
 | **Latitude** | `52.2220` |
 | **Longitude** | `21.0070` |
 | **Elevation** | `112` |
-
-![Tworzenie kanału](img/02_thingspeak_nowy_kanal.png)
 
 ### 1.3 Widok utworzonego kanału
 
