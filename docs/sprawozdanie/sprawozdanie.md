@@ -35,6 +35,16 @@
   - [5.1 Przesłanie skryptu na Pi](#51-przesłanie-skryptu-na-pi)
   - [5.2 Uruchomienie skryptu](#52-uruchomienie-skryptu)
   - [5.3 Wynik działania](#53-wynik-działania)
+- [Krok 6 — Podłączenie czujników i weryfikacja I2C](#krok-6--podłączenie-czujników-i-weryfikacja-i2c)
+  - [6.1 Podłączenie czujników na płytce stykowej](#61-podłączenie-czujników-na-płytce-stykowej)
+  - [6.2 Weryfikacja połączeń — skan I2C](#62-weryfikacja-połączeń--skan-i2c)
+  - [6.3 Instalacja bibliotek Python](#63-instalacja-bibliotek-python)
+  - [6.4 Szybki test odczytu czujników](#64-szybki-test-odczytu-czujników)
+- [Krok 7 — Skrypt główny stacji pogodowej](#krok-7--skrypt-główny-stacji-pogodowej)
+  - [7.1 Utworzenie pliku `.env` z kluczem API](#71-utworzenie-pliku-env-z-kluczem-api)
+  - [7.2 Utworzenie skryptu `weather_station.py`](#72-utworzenie-skryptu-weather_stationpy)
+  - [7.3 Instalacja dodatkowej zależności](#73-instalacja-dodatkowej-zależności)
+  - [7.4 Uruchomienie testowe](#74-uruchomienie-testowe)
 
 ---
 
@@ -303,6 +313,119 @@ Program wywołuje komendę `i2cdetect -y 1`, która skanuje wszystkie adresy na 
 Dioda LED migała poprawnie, a skan I2C zakończył się sukcesem (brak urządzeń to oczekiwany wynik na tym etapie). System jest gotowy do podłączenia czujników w następnym kroku.
 
 ![Wynik skryptu testowego](img/19_test_led_i2c.png)
+
+---
+
+## Krok 6 — Podłączenie czujników i weryfikacja I2C
+
+**Cel:** Fizyczne podłączenie czujników BME280 i BH1750 do Raspberry Pi przez magistralę I2C, weryfikacja poprawności połączeń za pomocą `i2cdetect` oraz instalacja bibliotek Python potrzebnych do odczytu danych.
+
+### 6.1 Podłączenie czujników na płytce stykowej
+
+Przed podłączaniem czujników **odłączono zasilanie Raspberry Pi** (odłączenie kabla micro-USB). Czujniki BME280 i BH1750 wpięto w płytkę stykową i połączono z GPIO Raspberry Pi za pomocą kabelków jumper zgodnie ze schematem z rozdziału „Schemat połączeń":
+
+| Pin RPi | Funkcja | Kolor kabelka | Pin BME280 | Pin BH1750 |
+|---------|---------|---------------|------------|------------|
+| Pin 1 (lewy górny) | 3,3 V | biały | VIN | VCC |
+| Pin 6 (prawy, 3. rząd) | GND | czarny | GND | GND |
+| Pin 3 (lewy, 2. rząd) | SDA (GPIO 2) | zielony/fioletowy/niebieski | SDA | SDA |
+| Pin 5 (lewy, 3. rząd) | SCL (GPIO 3) | żółty/pomarańczowy/czerwony | SCL | SCL |
+
+Oba czujniki są podłączone równolegle do tych samych 4 pinów — rozróżniane są po unikatowych adresach I2C (BME280: `0x76`, BH1750: `0x23`). Rezystory pull-up nie są wymagane, ponieważ moduły mają je wbudowane.
+
+![Czujniki podłączone na płytce stykowej](img/20_czujniki_podlaczone.png)
+
+### 6.2 Weryfikacja połączeń — skan I2C
+
+Po podłączeniu zasilania i ponownym połączeniu przez SSH wykonano skanowanie magistrali I2C w celu potwierdzenia, że Pi widzi oba czujniki:
+
+```bash
+i2cdetect -y 1
+```
+
+W tabeli powinny pojawić się dwa adresy:
+- **0x23** — czujnik BH1750 (natężenie światła)
+- **0x76** — czujnik BME280 (temperatura, wilgotność, ciśnienie)
+
+![Wynik i2cdetect — oba czujniki wykryte](img/21_i2cdetect_czujniki.png)
+
+### 6.3 Instalacja bibliotek Python
+
+Raspberry Pi OS Bookworm wymusza użycie wirtualnego środowiska Python (PEP 668) — bezpośrednia instalacja pakietów przez `pip` systemowo jest zablokowana. Utworzono dedykowany katalog projektu z uporządkowaną strukturą folderów, środowiskiem wirtualnym i zainstalowano wymagane biblioteki:
+
+```bash
+mkdir -p ~/weather-station/logs
+python3 -m venv ~/weather-station/venv
+source ~/weather-station/venv/bin/activate
+pip install adafruit-circuitpython-bme280 adafruit-circuitpython-bh1750 requests
+```
+
+Struktura katalogów na Raspberry Pi:
+
+```
+/home/pi/weather-station/
+├── venv/              # środowisko wirtualne Python
+├── weather_station.py # główny skrypt (krok 7)
+├── .env               # klucz API ThingSpeak
+└── logs/              # logi działania skryptu
+```
+
+![Utworzenie struktury projektu i instalacja bibliotek](img/22_pip_install.png)
+
+### 6.4 Szybki test odczytu czujników
+
+Aby upewnić się, że biblioteki działają poprawnie i czujniki zwracają sensowne wartości, wykonano szybki test w interpreterze Python (wewnątrz aktywowanego środowiska wirtualnego):
+
+![Test odczytu czujników](img/23_test_odczytu.png)
+
+---
+
+## Krok 7 — Skrypt główny stacji pogodowej
+
+**Cel:** Utworzenie skryptu Python, który cyklicznie odczytuje dane z czujników BME280 i BH1750, wysyła je do chmury ThingSpeak oraz loguje lokalnie do pliku.
+
+### 7.1 Utworzenie pliku `.env` z kluczem API
+
+Klucz API ThingSpeak przechowywany jest w pliku `.env` — oddzielonym od kodu źródłowego, aby nie trafił do repozytorium Git:
+
+```bash
+echo "THINGSPEAK_API_KEY=G99UGZ2FSQ1WQMDZ" > ~/weather-station/.env
+```
+
+### 7.2 Utworzenie skryptu `weather_station.py`
+
+Skrypt przesłano z komputera na Raspberry Pi za pomocą `scp`:
+
+```bash
+scp src/weather_station.py pi@weather-station.local:/home/pi/weather-station/
+```
+
+### 7.3 Instalacja dodatkowej zależności
+
+Skrypt korzysta z biblioteki `python-dotenv` do wczytywania pliku `.env`. Zainstalowano ją w środowisku wirtualnym:
+
+```bash
+source ~/weather-station/venv/bin/activate
+pip install python-dotenv
+```
+
+### 7.4 Uruchomienie testowe
+
+Uruchomiono skrypt testowo, aby potwierdzić poprawność odczytów i wysyłki danych do ThingSpeak:
+
+```bash
+cd ~/weather-station
+source venv/bin/activate
+python3 weather_station.py
+```
+
+W terminalu pojawiły się komunikaty `OK` z odczytami z czujników, a w ThingSpeak zaczęły pojawiać się pierwsze punkty na wykresach.
+
+![Uruchomienie testowe skryptu](img/25_test_run.png)
+
+![Pojawienie się punktów w ThingSpeak](img/26_ThingSpeak_values.png)
+
+Skrypt zatrzymano kombinacją `Ctrl+C` po potwierdzeniu poprawności działania.
 
 ---
 
