@@ -45,6 +45,10 @@
   - [7.2 Utworzenie skryptu `weather_station.py`](#72-utworzenie-skryptu-weather_stationpy)
   - [7.3 Instalacja dodatkowej zależności](#73-instalacja-dodatkowej-zależności)
   - [7.4 Uruchomienie testowe](#74-uruchomienie-testowe)
+- [Krok 8 — Usługa systemd (automatyczny start)](#krok-8--usługa-systemd-automatyczny-start)
+  - [8.1 Utworzenie pliku usługi](#81-utworzenie-pliku-usługi)
+  - [8.2 Instalacja i aktywacja usługi](#82-instalacja-i-aktywacja-usługi)
+  - [8.3 Weryfikacja działania](#83-weryfikacja-działania)
 
 ---
 
@@ -389,7 +393,7 @@ Aby upewnić się, że biblioteki działają poprawnie i czujniki zwracają sens
 Klucz API ThingSpeak przechowywany jest w pliku `.env` — oddzielonym od kodu źródłowego, aby nie trafił do repozytorium Git:
 
 ```bash
-echo "THINGSPEAK_API_KEY=G99UGZ2FSQ1WQMDZ" > ~/weather-station/.env
+echo "THINGSPEAK_API_KEY=..." > ~/weather-station/.env
 ```
 
 ### 7.2 Utworzenie skryptu `weather_station.py`
@@ -426,6 +430,65 @@ W terminalu pojawiły się komunikaty `OK` z odczytami z czujników, a w ThingSp
 ![Pojawienie się punktów w ThingSpeak](img/26_ThingSpeak_values.png)
 
 Skrypt zatrzymano kombinacją `Ctrl+C` po potwierdzeniu poprawności działania.
+
+---
+
+## Krok 8 — Usługa systemd (automatyczny start)
+
+**Cel:** Skonfigurowanie stacji pogodowej jako usługi systemowej, dzięki czemu skrypt uruchamia się automatycznie po starcie Raspberry Pi i restartuje się w przypadku awarii.
+
+> **Dlaczego systemd, a nie cron?**
+> Skrypt `weather_station.py` działa w pętli nieskończonej (`while True`) — jest demonem, nie zadaniem jednorazowym. `systemd` daje nam: automatyczny restart po awarii (`Restart=on-failure`), centralne logi (`journalctl`), kontrolę zależności (czekanie na sieć) i łatwe zarządzanie (`start`/`stop`/`status`).
+
+### 8.1 Utworzenie pliku usługi
+
+Plik `weather-station.service` umieszczono w repozytorium w katalogu `deploy/`
+
+Kluczowe elementy konfiguracji:
+
+| Dyrektywa | Znaczenie |
+|---|---|
+| `After=network-online.target` | Czeka na połączenie sieciowe przed startem (wymagane do wysyłki danych do ThingSpeak) |
+| `Environment=VIRTUAL_ENV=...` | Ustawia środowisko wirtualne Python bez potrzeby `source activate` |
+| `Restart=on-failure` | Automatyczny restart usługi w przypadku nieoczekiwanego zakończenia |
+| `RestartSec=30` | Odczekanie 30 sekund przed ponownym uruchomieniem |
+
+### 8.2 Instalacja i aktywacja usługi
+
+Przesłano plik usługi z komputera na Raspberry Pi i aktywowano:
+
+```bash
+# Przesłanie pliku usługi na Pi
+scp deploy/weather-station.service pi@weather-station.local:/tmp/
+
+# Na Raspberry Pi — instalacja usługi
+sudo cp /tmp/weather-station.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable weather-station
+sudo systemctl start weather-station
+```
+
+Komenda `enable` powoduje, że usługa uruchomi się automatycznie po każdym restarcie systemu.
+
+### 8.3 Weryfikacja działania
+
+Sprawdzono status usługi:
+
+```bash
+sudo systemctl status weather-station
+```
+
+![Status usługi systemd](img/27_systemd_status.png)
+
+Podgląd logów w czasie rzeczywistym:
+
+```bash
+journalctl -u weather-station -f
+```
+
+![Logi usługi weather-station](img/28_journalctl_logs.png)
+
+Usługa działa poprawnie — dane są wysyłane do ThingSpeak co 60 sekund, a po restarcie Raspberry Pi skrypt uruchamia się automatycznie.
 
 ---
 

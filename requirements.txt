@@ -1,0 +1,5 @@
+requests
+python-dotenv
+matplotlib
+adafruit-circuitpython-bme280
+adafruit-circuitpython-bh1750
