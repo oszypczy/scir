@@ -1,2 +1,5 @@
 # Environment variables (API keys, secrets)
 .env
+
+# Generated output
+output/
