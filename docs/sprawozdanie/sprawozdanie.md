@@ -49,6 +49,17 @@
   - [8.1 Utworzenie pliku usługi](#81-utworzenie-pliku-usługi)
   - [8.2 Instalacja i aktywacja usługi](#82-instalacja-i-aktywacja-usługi)
   - [8.3 Weryfikacja działania](#83-weryfikacja-działania)
+- [Krok 9 — Zbieranie statystyk po dłuższym czasie pracy](#krok-9--zbieranie-statystyk-po-dłuższym-czasie-pracy)
+  - [9.1 Warunki pomiarowe](#91-warunki-pomiarowe)
+  - [9.2 Skrypt analityczny `src/analyze_data.py`](#92-skrypt-analityczny-srcanalyze_datapy)
+  - [9.3 Podsumowanie danych](#93-podsumowanie-danych)
+  - [9.4 Statystyki opisowe](#94-statystyki-opisowe)
+  - [9.5 Przebieg czasowy](#95-przebieg-czasowy)
+  - [9.6 Punkt rosy](#96-punkt-rosy)
+  - [9.7 Mapa cieplna temperatury](#97-mapa-cieplna-temperatury)
+  - [9.8 Dzień vs noc](#98-dzień-vs-noc)
+  - [9.9 Raport anomalii](#99-raport-anomalii)
+  - [9.10 Wnioski](#910-wnioski)
 
 ---
 
@@ -492,4 +503,139 @@ Usługa działa poprawnie — dane są wysyłane do ThingSpeak co 60 sekund, a p
 
 ---
 
-<!-- Dalsze kroki będą uzupełniane w miarę realizacji projektu -->
+## Krok 9 — Zbieranie statystyk po dłuższym czasie pracy
+
+**Cel:** Po kilkunastu dniach działania stacji pobrać zgromadzone dane z ThingSpeak, oczyścić je, policzyć statystyki opisowe, korelacje i metryki pochodne oraz przedstawić wyniki w formie wykresów i raportu tekstowego.
+
+### 9.1 Warunki pomiarowe
+
+Raspberry Pi z czujnikami stało **na parapecie przy rozchylonym oknie** (typowe okno rozwierno-uchylne w pozycji uchyłowej). Nie zdecydowałem się wystawić stacji na zewnątrz ze względu na wiosenne warunki pogodowe — częste przelotne opady, wiatr i obecność ptaków, które mogłyby uszkodzić odsłonięte czujniki lub kabelki. Dodatkowo w kilku dłuższych okresach **okno było zamykane** (w nocy oraz gdy w pokoju robiło się zbyt chłodno), co wyraźnie widać na przebiegu czasowym jako nagłe skoki temperatury i wilgotności — to nie są błędy pomiaru, tylko realna zmiana warunków po stronie sensora.
+
+Z tego powodu:
+
+- **temperatura** i **wilgotność** oscylują między wartościami "zewnętrznymi" (otwarte okno, ~5–10 °C) a "pokojowymi" (zamknięte, ~17–21 °C),
+- **natężenie światła** odzwierciedla pełny cykl dobowy (parapet pobierał bezpośrednie światło dzienne w godzinach popołudniowych),
+- **ciśnienie** jest jedynym parametrem praktycznie niezależnym od stanu okna — daje rzetelny sygnał zmian pogodowych.
+
+### 9.2 Skrypt analityczny `src/analyze_data.py`
+
+Utworzono osobny skrypt, który:
+
+1. **Pobiera dane** z ThingSpeak przez REST API z paginacją po datach (limit 8000 rekordów/zapytanie).
+2. **Czyści dane**: walidacja zakresów fizycznych (temp. −30…50 °C, wilg. 0–100 %, ciśn. 900–1100 hPa), usuwanie outlierów metodą IQR (3·IQR), forward-fill luk do 5 minut po resamplingu 1-minutowym.
+3. **Wybiera najdłuższy ciągły okres pomiarowy** — z uwagi na kilka restartów stacji (wyłączenia, zmiana miejsca), dane z chmury zawierały luki wielodniowe. Dalsza analiza operuje tylko na najdłuższym segmencie bez przerw dłuższych niż 2 h, aby wykresy osi czasu nie były "rozciągane" po pustkach, a statystyki nie mieszały niezależnych sesji pomiarowych.
+4. **Dolicza metryki pochodne**: punkt rosy (wzór Magnusa), klasyfikacja dzień/noc (próg 10 lux), trend ciśnienia (różnica krocząca 3 h), indeks komfortu Thoma (DI).
+5. **Generuje 10 wykresów PNG** i **raport tekstowy** (`output/report.txt`).
+
+Uruchomienie:
+
+```bash
+pip install -r requirements.txt
+python src/analyze_data.py
+```
+
+### 9.3 Podsumowanie danych
+
+```
+Pełny zakres pobranych danych:   2026-03-24 17:08 — 2026-04-09 15:08
+  (łącznie 1847 pomiarów we wszystkich sesjach)
+Analizowany zakres (najdłuższy ciągły okres):
+                                 2026-04-08 16:01 — 2026-04-09 15:08
+Liczba pomiarów w analizie:      1388 (pokrycie: 75,1 %)
+Czas obserwacji (analizowany):   ~23 godziny
+```
+
+### 9.4 Statystyki opisowe
+
+```
+  temperature [°C]:
+    Średnia:      13,06
+    Mediana:      13,38
+    Odch.std:      4,62
+    Min / Max:     5,25 / 21,73
+    Q1  / Q3:      8,91 / 16,38
+
+  humidity [%]:
+    Średnia:      39,41
+    Mediana:      35,34
+    Odch.std:      9,40
+    Min / Max:    21,14 / 56,98
+    Q1  / Q3:     33,37 / 49,46
+
+  pressure [hPa]:
+    Średnia:    1006,74
+    Mediana:    1006,67
+    Odch.std:      1,08
+    Min / Max:  1005,00 / 1008,46
+    Q1  / Q3:   1005,88 / 1007,88
+
+  light [lux]:
+    Średnia:      95,14
+    Mediana:      14,58
+    Odch.std:    136,62
+    Min / Max:     0,00 / 742,08
+    Q1  / Q3:      0,00 / 181,98
+```
+
+Bardzo duża różnica między średnią a medianą natężenia światła (95 vs 15 lux) to efekt silnej asymetrii rozkładu — przez większość doby (noc, noc + poranek) czujnik pokazuje zera, a wysokie wartości występują tylko przy bezpośrednim świetle popołudniowym.
+
+### 9.5 Przebieg czasowy
+
+![Przebieg czasowy parametrów stacji pogodowej](img/29_analiza_time_series.png)
+
+Na wykresie wyraźnie widać **skokowe zmiany temperatury i wilgotności** — każdy taki "stopień" odpowiada otwarciu lub zamknięciu okna. W godzinach dziennych czujnik notował temperatury ok. 16–21 °C (okno zamknięte/przymknięte), w nocy i wczesnym rankiem spadał do 5–10 °C (okno otwarte, warunki zewnętrzne). Ciśnienie w tym czasie spadało płynnie z ~1008,5 do ~1005 hPa, co wskazuje na nadchodzący niż i pogorszenie pogody — wyjaśnia to też, dlaczego nie zdecydowałem się wystawić stacji na zewnątrz.
+
+### 9.6 Punkt rosy
+
+```
+Punkt rosy — śr.: −0,9 °C, min: −7,2 °C, max: 5,6 °C
+Indeks komfortu (DI) — śr.: 13,3, min: 7,5, max: 19,0
+```
+
+![Temperatura vs punkt rosy](img/31_analiza_dew_point.png)
+
+Punkt rosy wyliczony ze wzoru Magnusa trzymał się znacznie poniżej temperatury otoczenia — różnica rzędu 10–15 °C oznacza **niskie ryzyko kondensacji pary wodnej** (mgła/rosa pojawia się gdy T zbliża się do T_dew). Duża "wstęga" różnicy (obszar fioletowy) potwierdza komfortowe warunki mimo otwartego okna. Ujemne wartości punktu rosy w nocy (do −7 °C) odzwierciedlają bardzo suche, zimne powietrze zewnętrzne.
+
+### 9.7 Mapa cieplna temperatury
+
+![Mapa cieplna temperatury: godzina × dzień](img/32_analiza_heatmap.png)
+
+Mapa pokazuje **pełny cykl dobowy** złożony z końcówki 8 kwietnia (godz. 16–23) i pierwszej połowy 9 kwietnia (godz. 0–15). Widoczne są wyraźnie:
+
+- **ciepłe popołudnie 8 kwietnia** (pomarańcz) — nagrzana pokoju,
+- **chłodna noc** 8/9 kwietnia (ciemny niebieski, ~6–8 °C) — okno otwarte,
+- **poranne ochłodzenie** 9 kwietnia między 5 a 8 rano (najzimniej w całym okresie),
+- **południowy skok temperatury** do ponad 20 °C (ciemna czerwień) po zamknięciu okna i nasłonecznieniu parapetu.
+
+Białe komórki to godziny, w których stacja nie pracowała (urządzenie włączone dopiero ok. 16:00 dnia 8.04 i wyłączone ok. 15:00 dnia 9.04).
+
+### 9.8 Dzień vs noc
+
+```
+Dzień (light ≥ 10 lux):
+  temperature: śr.=13,0, std=4,8, min=5,8, max=21,7
+  humidity:    śr.=37,7, std=9,4, min=21,1, max=55,4
+
+Noc (light < 10 lux):
+  temperature: śr.=13,1, std=4,4, min=5,2, max=20,3
+  humidity:    śr.=41,2, std=9,1, min=24,8, max=57,0
+```
+
+Średnie temperatury dnia i nocy są praktycznie identyczne (13,0 vs 13,1 °C) — to efekt wspomnianego otwierania/zamykania okna, które "odwraca" naturalny cykl (w nocy bywało ciepło z zamkniętym oknem, w dzień zimno z otwartym). Wilgotność w nocy jest wyraźnie wyższa (~41 % vs ~38 %), co jest fizycznie oczekiwane — nocna kondensacja wilgoci w zimniejszym powietrzu.
+
+### 9.9 Raport anomalii
+
+```
+temperature: 0 anomalii z-score,  23 nagłych skoków
+humidity:    0 anomalii z-score,  28 nagłych skoków
+pressure:    0 anomalii z-score,  65 nagłych skoków
+light:      26 anomalii z-score,  36 nagłych skoków
+```
+
+"Nagłe skoki" temperatury i wilgotności to ponownie skutek manipulowania oknem — w krótkim czasie (minuty) sensor wchodził w zupełnie inne środowisko. W przypadku światła anomalie z-score odpowiadają momentom, gdy na parapet padało bezpośrednie słońce (ekstremalnie wysokie lux), odstające od 75-procentowej kwantyli zerowych (noc). Anomalie ciśnienia zniknęły zupełnie po ograniczeniu analizy do jednej ciągłej sesji — wcześniejsza wartość (28 anomalii) pochodziła z mieszania dwóch niezależnych okresów pomiarowych o różnym ciśnieniu bazowym.
+
+### 9.10 Wnioski
+
+1. **Stacja działa stabilnie**: przez prawie dobę ciągłych pomiarów nie wystąpiły anomalie z-score dla T, RH i P — dane są wewnętrznie spójne.
+2. **Ciśnienie** jest najlepszym wskaźnikiem zmian pogody w tej konfiguracji — niezależne od stanu okna, wyraźny trend 3,5 hPa w ciągu doby.
+3. **Warunki pomiarowe** (parapet z uchyłowym oknem) ograniczają interpretację temperatury i wilgotności jako "zewnętrznych" — to raczej hybryda pokój/dwór, zależna od świadomych ingerencji użytkownika. Do bezstronnej analizy mikroklimatu zewnętrznego konieczna byłaby osłona radiacyjna i montaż poza wpływem otwarć okna.

@@ -144,6 +144,42 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def select_longest_continuous_period(df: pd.DataFrame, max_gap: str = "2h") -> pd.DataFrame:
+    """Zwraca wycinek DataFrame odpowiadający najdłuższemu ciągłemu okresowi pomiarowemu.
+
+    "Ciągły" = żadna luka między sąsiadującymi *rzeczywistymi* próbkami (nie-NaN)
+    nie przekracza ``max_gap``. Eliminuje to wielodniowe przerwy w danych,
+    które zaburzają skalę osi czasu, mieszają statystyki z różnych sesji
+    pomiarowych i psują układ map cieplnych.
+    """
+    if df.empty:
+        return df
+
+    # Próbki, w których jest cokolwiek niepustego
+    has_data = df.notna().any(axis=1)
+    data_idx = df.index[has_data]
+    if len(data_idx) < 2:
+        return df.loc[data_idx]
+
+    max_gap_td = pd.Timedelta(max_gap)
+    gaps = data_idx.to_series().diff()
+    # ID segmentu rośnie przy każdej luce > progu
+    segment_id = (gaps > max_gap_td).cumsum()
+
+    segments = pd.DataFrame({"ts": data_idx, "seg": segment_id.values})
+    agg = segments.groupby("seg")["ts"].agg(["min", "max", "count"])
+    agg["duration"] = agg["max"] - agg["min"]
+
+    longest = agg.sort_values("duration", ascending=False).iloc[0]
+    start, end = longest["min"], longest["max"]
+
+    log.info(
+        "Najdłuższy ciągły okres: %s – %s  (%s, %d próbek; wykrytych sesji: %d)",
+        start, end, longest["duration"], int(longest["count"]), len(agg),
+    )
+    return df.loc[start:end]
+
+
 # ---------------------------------------------------------------------------
 # 3. Metryki pochodne
 # ---------------------------------------------------------------------------
@@ -415,15 +451,25 @@ def plot_heatmap_temp(df: pd.DataFrame) -> None:
     df_copy["date"] = df_copy.index.date
     pivot = df_copy.pivot_table(values="temperature", index="date", columns="hour", aggfunc="mean")
 
-    fig, ax = plt.subplots(figsize=(14, max(4, len(pivot) // 3)))
-    im = ax.imshow(pivot.values, aspect="auto", cmap="RdYlBu_r",
+    # Reindex na pełny, ciągły zakres godzin i dni — ewentualne puste komórki
+    # będą wyraźnie widoczne jako NaN (białe), a nie "sklejane" z sąsiadami.
+    if not pivot.empty:
+        full_dates = pd.date_range(start=pivot.index.min(), end=pivot.index.max(), freq="D").date
+        pivot = pivot.reindex(index=full_dates, columns=range(24))
+
+    fig, ax = plt.subplots(figsize=(14, max(4, len(pivot) * 0.45)))
+    cmap = plt.get_cmap("RdYlBu_r").copy()
+    cmap.set_bad("white")
+    masked = np.ma.masked_invalid(pivot.values)
+    im = ax.imshow(masked, aspect="auto", cmap=cmap,
                    extent=[-0.5, 23.5, len(pivot) - 0.5, -0.5])
     plt.colorbar(im, ax=ax, label="Temperatura [°C]")
     ax.set_xlabel("Godzina")
     ax.set_xticks(range(0, 24, 2))
-    ax.set_yticks(range(0, len(pivot), max(1, len(pivot) // 10)))
-    ax.set_yticklabels([str(pivot.index[i]) for i in range(0, len(pivot), max(1, len(pivot) // 10))],
-                       fontsize=8)
+    # Pokaż WSZYSTKIE dni z etykietą, gdy dni jest mało (po filtrowaniu – zwykle <20)
+    step = 1 if len(pivot) <= 20 else max(1, len(pivot) // 10)
+    ax.set_yticks(range(0, len(pivot), step))
+    ax.set_yticklabels([str(pivot.index[i]) for i in range(0, len(pivot), step)], fontsize=8)
     ax.set_title("Mapa cieplna temperatury: godzina × dzień", fontsize=13)
     fig.tight_layout()
     _savefig(fig, "09_heatmap_temperature.png")
@@ -463,10 +509,21 @@ def generate_report(df: pd.DataFrame, stats: dict) -> str:
 
     h("Stacja pogodowa — Raport analizy danych (Etap 4)")
     lines.append(f"Wygenerowano: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"Zakres danych: {df.index.min()} — {df.index.max()}")
-    lines.append(f"Liczba pomiarów: {df[sensors[0]].count()} (po czyszczeniu)")
+
+    full_range = stats.get("full_range", (None, None))
+    full_count = stats.get("full_count", 0)
+    if full_range[0] is not None:
+        lines.append(f"Pełny zakres pobranych danych: {full_range[0]} — {full_range[1]}")
+        lines.append(f"  (łącznie {full_count} pomiarów we wszystkich sesjach)")
+
+    lines.append(f"Analizowany zakres (najdłuższy ciągły okres): "
+                 f"{df.index.min()} — {df.index.max()}")
+    analyzed_count = df[sensors[0]].count()
+    lines.append(f"Liczba pomiarów w analizie: {analyzed_count}")
+    if full_count:
+        lines.append(f"  (pokrycie: {100 * analyzed_count / full_count:.1f}% wszystkich danych)")
     duration = df.index.max() - df.index.min()
-    lines.append(f"Czas obserwacji: {duration.days} dni {duration.seconds//3600} godz.")
+    lines.append(f"Czas obserwacji (analizowany): {duration.days} dni {duration.seconds//3600} godz.")
 
     h("Statystyki opisowe")
     desc = stats["descriptive"]
@@ -548,13 +605,21 @@ def main() -> None:
     df_raw = fetch_thingspeak(CHANNEL_ID, READ_API_KEY)
 
     # 2. Wyczyść
-    df = clean_data(df_raw)
+    df_clean = clean_data(df_raw)
+
+    # 2b. Wybierz najdłuższy ciągły okres — reszta danych (pojedyncze, stare
+    # sesje rozdzielone wielodniowymi lukami) zaburza wykresy osi czasu
+    # oraz miesza statystyki z niezależnych deploy'ów czujnika.
+    full_range = (df_clean.index.min(), df_clean.index.max()) if not df_clean.empty else (None, None)
+    df = select_longest_continuous_period(df_clean, max_gap="2h")
 
     # 3. Metryki pochodne
     df = add_derived_metrics(df)
 
     # 4. Statystyki
     stats = compute_statistics(df)
+    stats["full_range"] = full_range
+    stats["full_count"] = int(df_clean[list(FIELD_MAP.values())[0]].count()) if not df_clean.empty else 0
 
     # 5. Wykresy
     log.info("Generowanie wykresów...")
